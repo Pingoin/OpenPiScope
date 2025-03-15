@@ -2,8 +2,11 @@ use std::{
     fs::{self},
     path::PathBuf,
 };
+use protoc_bin_vendored::protoc_bin_path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let protoc = protoc_bin_path().unwrap();
+    std::env::set_var("PROTOC", protoc);
     let out_dir = PathBuf::from("./src/generated");
     fs::create_dir_all(&out_dir)?;
     tonic_build::configure()

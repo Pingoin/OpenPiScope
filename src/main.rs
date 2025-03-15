@@ -1,5 +1,5 @@
 use futures::{join, prelude::*};
-use generated::open_pi_scope::gnss_data_server_server::{GnssDataServer, GnssDataServerServer};
+use generated::open_pi_scope::gnss_data_server_server::GnssDataServerServer;
 use generated::open_pi_scope::{GnssData, GnssDataRequest, GnssDataResponse};
 use gpsd_proto::UnifiedResponse;
 use tonic::transport::Server;
@@ -25,13 +25,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("Starting");
     static gps_system:GpsSystem = GpsSystem::new();
 
-    handle_gnss(&gps_system).await?;
-    join!(handle_gnss(&gps_system),handle_rpc(&gps_system));
+    let _res=join!(handle_gnss(&gps_system),handle_rpc(&gps_system));
     Ok(())
 }
 
 async fn handle_rpc(gps_system: &'static GpsSystem) -> anyhow::Result<()> {
-    let addr = "[::1]:50051".parse()?;
+    let addr = "0.0.0.0:50051".parse()?;
 
     let rpc = Rpc { gnss: gps_system };
     let reflection_1 = tonic_reflection::server::Builder::configure()
@@ -133,6 +132,16 @@ impl GpsSystem {
         };
         Ok(())
     }
+
+    pub fn get_data(&self)->GnssData{
+        let mut data = GnssData::default();
+        critical_section::with(|cs| {
+            let new_data = self.data.borrow(cs).borrow();
+            data=new_data.clone();
+        });
+
+        data
+    }
 }
 
 struct Rpc {
@@ -143,10 +152,10 @@ struct Rpc {
 impl generated::open_pi_scope::gnss_data_server_server::GnssDataServer for Rpc {
     async fn get_gnss_data(
         &self,
-        request: tonic::Request<GnssDataRequest>,
+        _request: tonic::Request<GnssDataRequest>,
     ) -> Result<tonic::Response<GnssDataResponse>, tonic::Status> {
-        let data = GnssData::default();
-        //let data = self.gnss.data.lock().await.borrow();
+        let data = self.gnss.get_data();
+
         Ok(tonic::Response::new(GnssDataResponse {
             gnss_data: Some(data.clone()),
         }))
