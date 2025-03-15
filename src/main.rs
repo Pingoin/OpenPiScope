@@ -2,11 +2,11 @@ use futures::{join, prelude::*};
 use generated::open_pi_scope::gnss_data_server_server::GnssDataServerServer;
 use generated::open_pi_scope::{GnssData, GnssDataRequest, GnssDataResponse};
 use gpsd_proto::UnifiedResponse;
-use tonic::transport::Server;
 use std::net::SocketAddr;
 use std::{cell::RefCell, error::Error};
 use tokio::net::TcpStream;
 use tokio_util::codec::{Framed, LinesCodec, LinesCodecError};
+use tonic::transport::Server;
 
 pub(crate) mod generated {
     pub(crate) mod open_pi_scope;
@@ -15,7 +15,14 @@ pub(crate) mod generated {
 
     impl From<gpsd_proto::Satellite> for open_pi_scope::Satellite {
         fn from(value: gpsd_proto::Satellite) -> Self {
-            open_pi_scope::Satellite {}
+            open_pi_scope::Satellite {
+                prn: value.prn as i32,
+                elevation: value.el.unwrap_or_default(),
+                azimuth: value.az.unwrap_or_default(),
+                signal_strength: value.ss.unwrap_or_default(),
+                used: value.used,
+                system: value.gnssid.unwrap_or_default() as i32,
+            }
         }
     }
 }
@@ -23,9 +30,9 @@ pub(crate) mod generated {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     println!("Starting");
-    static gps_system:GpsSystem = GpsSystem::new();
+    static GPS_SYSTEM: GpsSystem = GpsSystem::new();
 
-    let _res=join!(handle_gnss(&gps_system),handle_rpc(&gps_system));
+    let _res = join!(handle_gnss(&GPS_SYSTEM), handle_rpc(&GPS_SYSTEM));
     Ok(())
 }
 
@@ -66,7 +73,7 @@ struct GpsSystem {
 impl GpsSystem {
     pub const fn new() -> Self {
         GpsSystem {
-            data: critical_section::Mutex::new(RefCell::new(GnssData{
+            data: critical_section::Mutex::new(RefCell::new(GnssData {
                 lat: 0.0,
                 lon: 0.0,
                 alt: 0.0,
@@ -133,11 +140,11 @@ impl GpsSystem {
         Ok(())
     }
 
-    pub fn get_data(&self)->GnssData{
+    pub fn get_data(&self) -> GnssData {
         let mut data = GnssData::default();
         critical_section::with(|cs| {
             let new_data = self.data.borrow(cs).borrow();
-            data=new_data.clone();
+            data = new_data.clone();
         });
 
         data

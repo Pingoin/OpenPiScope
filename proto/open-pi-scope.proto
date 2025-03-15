@@ -39,5 +39,22 @@ enum Mode {
 }
 
 message Satellite {
-    // Definiere hier die Felder der `Satellite`-Struktur
+    int32 prn=1;
+    float elevation=2;
+    float azimuth=3;
+    float signalStrength=4;
+    bool used=5;
+    GNSSSystem system=6;
+    
+}
+
+enum GNSSSystem {
+    GPS=0;
+    SBAS=1;
+    GALILEO=2;
+    BEIDOU=3;
+    IMES=4;
+    QZSS=5;
+    GLONASS=6;
+    IRNSS=7;
 }

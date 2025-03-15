@@ -1,8 +1,8 @@
+use protoc_bin_vendored::protoc_bin_path;
 use std::{
     fs::{self},
     path::PathBuf,
 };
-use protoc_bin_vendored::protoc_bin_path;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let protoc = protoc_bin_path().unwrap();
