@@ -1,0 +1,43 @@
+syntax = "proto3";
+package open_pi_scope;
+
+service GnssDataServer{
+    rpc GetGnssData (GnssDataRequest) returns (GnssDataResponse);
+}
+
+message GnssDataRequest{
+
+}
+
+message GnssDataResponse{
+    GnssData gnss_data = 1;
+}
+
+message GnssData {
+    double lat = 1;
+    double lon = 2;
+    float alt = 3;
+    int32 leap_seconds = 4;
+    float estimated_error_longitude = 5;
+    float estimated_error_latitude = 6;
+    float estimated_error_plane = 7;
+    float estimated_error_altitude = 8;
+    float track = 9;
+    float speed = 10;
+    float climb = 11;
+    Mode mode = 12;
+    float estimated_error_track = 13;
+    float estimated_error_speed = 14;
+    float estimated_error_climb = 15;
+    repeated Satellite satellites = 16;
+}
+
+enum Mode {
+    NO_FIX = 0;
+    FIX_2D = 1;
+    FIX_3D = 2;
+}
+
+message Satellite {
+    // Definiere hier die Felder der `Satellite`-Struktur
+}
