@@ -1,8 +1,9 @@
 syntax = "proto3";
 package open_pi_scope;
 
-service GnssDataServer{
+service OpenPiScopeServer{
     rpc GetGnssData (GnssDataRequest) returns (GnssDataResponse);
+    rpc GetMagneticData (MagneticDataRequest) returns (MagneticDataResponse);
 }
 
 message GnssDataRequest{
@@ -57,4 +58,27 @@ enum GNSSSystem {
     QZSS=5;
     GLONASS=6;
     IRNSS=7;
+}
+
+message MagneticDataRequest{
+
+}
+
+message MagneticDataResponse{
+    MagneticData magnetic_data = 1;
+}
+
+message MagneticData {
+    // in degrees
+    float declination = 1;
+    // in degrees
+    float inclination = 2;
+    // in µT
+    float magnetic_flux_density= 3;
+}
+
+message Position{
+    double latitude = 1;
+    double longitude = 2;
+    float altitude = 3;
 }

@@ -1,12 +1,14 @@
 use futures::{join, prelude::*};
-use generated::open_pi_scope::gnss_data_server_server::GnssDataServerServer;
-use generated::open_pi_scope::{GnssData, GnssDataRequest, GnssDataResponse};
-use gpsd_proto::UnifiedResponse;
+use generated::open_pi_scope::open_pi_scope_server_server::{OpenPiScopeServer, OpenPiScopeServerServer};
+use generated::open_pi_scope::{GnssDataRequest, GnssDataResponse, MagneticDataRequest, MagneticDataResponse};
+use tonic::Response;
 use std::net::SocketAddr;
-use std::{cell::RefCell, error::Error};
+use std::error::Error;
 use tokio::net::TcpStream;
-use tokio_util::codec::{Framed, LinesCodec, LinesCodecError};
+use tokio_util::codec::{Framed, LinesCodec};
 use tonic::transport::Server;
+
+pub(crate) mod helpers;
 
 pub(crate) mod generated {
     pub(crate) mod open_pi_scope;
@@ -30,16 +32,18 @@ pub(crate) mod generated {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     println!("Starting");
-    static GPS_SYSTEM: GpsSystem = GpsSystem::new();
+    static GPS_SYSTEM: storage::Storage = storage::Storage::new();
 
     let _res = join!(handle_gnss(&GPS_SYSTEM), handle_rpc(&GPS_SYSTEM));
     Ok(())
 }
 
-async fn handle_rpc(gps_system: &'static GpsSystem) -> anyhow::Result<()> {
+async fn handle_rpc(gps_system: &'static storage::Storage) -> anyhow::Result<()> {
     let addr = "0.0.0.0:50051".parse()?;
 
-    let rpc = Rpc { gnss: gps_system };
+    let rpc = Rpc {
+        storage: gps_system,
+    };
     let reflection_1 = tonic_reflection::server::Builder::configure()
         .register_encoded_file_descriptor_set(generated::FILE_DESCRIPTOR_SET)
         .build_v1()?;
@@ -48,7 +52,7 @@ async fn handle_rpc(gps_system: &'static GpsSystem) -> anyhow::Result<()> {
         .build_v1alpha()?;
 
     Server::builder()
-        .add_service(GnssDataServerServer::new(rpc))
+        .add_service(OpenPiScopeServerServer::new(rpc))
         .add_service(reflection_1)
         .add_service(reflection_1a)
         .serve(addr)
@@ -57,114 +61,42 @@ async fn handle_rpc(gps_system: &'static GpsSystem) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn handle_gnss(gps: &GpsSystem) -> anyhow::Result<()> {
+async fn handle_gnss(gps: &storage::Storage) -> anyhow::Result<()> {
     let addr: SocketAddr = "127.0.0.1:2947".parse().unwrap();
     let stream = TcpStream::connect(&addr).await?;
     let mut framed: Framed<TcpStream, LinesCodec> = Framed::new(stream, LinesCodec::new());
     framed.send(gpsd_proto::ENABLE_WATCH_CMD).await?;
-    framed.try_for_each(|line| gps.update(line)).await?;
+    framed.try_for_each(|line| gps.update_gpsd(line)).await?;
     Ok(())
 }
 
-struct GpsSystem {
-    data: critical_section::Mutex<RefCell<GnssData>>,
-}
-
-impl GpsSystem {
-    pub const fn new() -> Self {
-        GpsSystem {
-            data: critical_section::Mutex::new(RefCell::new(GnssData {
-                lat: 0.0,
-                lon: 0.0,
-                alt: 0.0,
-                leap_seconds: 0,
-                estimated_error_longitude: 0.0,
-                estimated_error_latitude: 0.0,
-                estimated_error_plane: 0.0,
-                estimated_error_altitude: 0.0,
-                track: 0.0,
-                speed: 0.0,
-                climb: 0.0,
-                mode: 0,
-                estimated_error_track: 0.0,
-                estimated_error_speed: 0.0,
-                estimated_error_climb: 0.0,
-                satellites: Vec::new(),
-            })),
-        }
-    }
-
-    pub async fn update(&self, line: String) -> Result<(), LinesCodecError> {
-        match serde_json::from_str(&line) {
-            Ok(rd) => match rd {
-                UnifiedResponse::Tpv(t) => {
-                    critical_section::with(|cs| {
-                        let mut data = self.data.borrow(cs).borrow_mut();
-                        data.lat = t.lat.unwrap_or_default();
-                        data.lon = t.lon.unwrap_or_default();
-                        data.alt = t.alt.unwrap_or_default();
-                        data.leap_seconds = t.leapseconds.unwrap_or_default();
-                        data.estimated_error_longitude = t.epx.unwrap_or_default();
-                        data.estimated_error_latitude = t.epy.unwrap_or_default();
-                        data.estimated_error_plane = t.eph.unwrap_or_default();
-                        data.estimated_error_altitude = t.epv.unwrap_or_default();
-                        data.track = t.track.unwrap_or_default();
-                        data.speed = t.speed.unwrap_or_default();
-                        data.mode = t.mode as i32;
-                        data.climb = t.climb.unwrap_or_default();
-                        data.estimated_error_track = t.epd.unwrap_or_default();
-                        data.estimated_error_speed = t.eps.unwrap_or_default();
-                        data.estimated_error_climb = t.epc.unwrap_or_default();
-                        dbg!(data.satellites.len());
-                    });
-                }
-                UnifiedResponse::Sky(s) => {
-                    critical_section::with(|cs| {
-                        let mut data = self.data.borrow(cs).borrow_mut();
-                        if let Some(sats) = s.satellites.clone() {
-                            data.satellites = sats.iter().map(|sat| sat.clone().into()).collect();
-                        }
-                        println!(
-                            "Sky: {:?}/ sats: {}",
-                            s.device,
-                            s.satellites.unwrap_or_default().len()
-                        );
-                    });
-                }
-                _ => {}
-            },
-            Err(e) => {
-                println!("Error decoding: {e}");
-            }
-        };
-        Ok(())
-    }
-
-    pub fn get_data(&self) -> GnssData {
-        let mut data = GnssData::default();
-        critical_section::with(|cs| {
-            let new_data = self.data.borrow(cs).borrow();
-            data = new_data.clone();
-        });
-
-        data
-    }
-}
+mod storage;
 
 struct Rpc {
-    gnss: &'static GpsSystem,
+    storage: &'static storage::Storage,
 }
 
 #[tonic::async_trait]
-impl generated::open_pi_scope::gnss_data_server_server::GnssDataServer for Rpc {
+impl OpenPiScopeServer for Rpc {
     async fn get_gnss_data(
         &self,
         _request: tonic::Request<GnssDataRequest>,
     ) -> Result<tonic::Response<GnssDataResponse>, tonic::Status> {
-        let data = self.gnss.get_data();
+        let data = self.storage.get_gnss_data();
 
         Ok(tonic::Response::new(GnssDataResponse {
             gnss_data: Some(data.clone()),
+        }))
+    }
+
+    async fn get_magnetic_data(
+        &self,
+        _request: tonic::Request<MagneticDataRequest>,
+    ) -> Result<tonic::Response<MagneticDataResponse>, tonic::Status> {
+
+
+        Ok(Response::new(MagneticDataResponse{
+            magnetic_data: Some(self.storage.get_magnetic_data().clone()),
         }))
     }
 }
