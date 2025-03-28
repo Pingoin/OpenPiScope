@@ -1,17 +1,28 @@
 use chrono::Datelike;
 use gpsd_proto::UnifiedResponse;
 
+use nalgebra::UnitQuaternion;
 use tokio_util::codec::LinesCodecError;
-use world_magnetic_model::{time::Date, uom::si::{angle::{degree, Angle}, f32::Length, length::meter, magnetic_flux_density::microtesla}, GeomagneticField};
+use world_magnetic_model::{
+    time::Date,
+    uom::si::{
+        angle::{degree, Angle},
+        f32::Length,
+        length::meter,
+        magnetic_flux_density::microtesla,
+    },
+    GeomagneticField,
+};
 
 use crate::{
-    generated::open_pi_scope::{GnssData, MagneticData, Position},
+    generated::open_pi_scope::{AlignmentData, EulerAngle, GnssData, MagneticData, Position, Quaternion},
     helpers::MutexBox,
 };
 
 pub(crate) struct Storage {
-    pub(crate) gnss_data: MutexBox<GnssData>,
-    pub(crate) magnetic_data: MutexBox<MagneticData>,
+    gnss_data: MutexBox<GnssData>,
+    magnetic_data: MutexBox<MagneticData>,
+    alingment_data: MutexBox<AlignmentData>,
 }
 
 impl Storage {
@@ -40,6 +51,10 @@ impl Storage {
                 inclination: 0.0,
                 magnetic_flux_density: 0.0,
             }),
+            alingment_data: MutexBox::new(AlignmentData {
+                alignment: None,
+                correction: None,
+            }),
         }
     }
 
@@ -63,7 +78,7 @@ impl Storage {
                         data.estimated_error_track = t.epd.unwrap_or_default();
                         data.estimated_error_speed = t.eps.unwrap_or_default();
                         data.estimated_error_climb = t.epc.unwrap_or_default();
-                        println!("Fix: {} / Sattelites: {}",t.mode,data.satellites.len());
+                        println!("Fix: {} / Sattelites: {}", t.mode, data.satellites.len());
                     });
                     self.update_magnetic();
                 }
@@ -87,13 +102,12 @@ impl Storage {
         self.magnetic_data.open(|mag| {
             let now = chrono::Utc::now();
 
-
             if let Ok(geomagnetic_field) = GeomagneticField::new(
-                Length::new::<meter>(pos.altitude), // height
-                Angle::new::<degree>(pos.latitude as f32), // lat
+                Length::new::<meter>(pos.altitude),         // height
+                Angle::new::<degree>(pos.latitude as f32),  // lat
                 Angle::new::<degree>(pos.longitude as f32), // lon
-                Date::from_ordinal_date(now.year(), now.ordinal()as u16).unwrap_or(Date::MIN) // date
-            ){
+                Date::from_ordinal_date(now.year(), now.ordinal() as u16).unwrap_or(Date::MIN), // date
+            ) {
                 mag.declination = geomagnetic_field.declination().get::<degree>();
                 mag.inclination = geomagnetic_field.inclination().get::<degree>();
                 mag.magnetic_flux_density = geomagnetic_field.f().get::<microtesla>();
@@ -113,4 +127,21 @@ impl Storage {
             altitude: gnss.alt,
         })
     }
+    pub fn update_orientation(&self, orientation: Quaternion){
+        self.alingment_data.open(|alignment| {
+            alignment.alignment = Some(orientation);
+        })
+    }
+    pub fn get_orientation(&self) -> Option<(Quaternion,EulerAngle)>{
+        let alignment = self.alingment_data.clone_inner();
+        let quat:UnitQuaternion<f32>= alignment.alignment?.into();
+        let quat=if let Some(correction) =  alignment.correction{
+            let correction:UnitQuaternion<f32> = correction.into();
+            quat*correction
+        }else {quat};
+
+        let (roll, pitch, yaw) = quat.euler_angles();
+        Some((quat.into(), EulerAngle {roll:roll, pitch:pitch, yaw:yaw}))
+    }
 }
+

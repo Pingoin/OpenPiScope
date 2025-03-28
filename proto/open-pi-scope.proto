@@ -4,6 +4,7 @@ package open_pi_scope;
 service OpenPiScopeServer{
     rpc GetGnssData (GnssDataRequest) returns (GnssDataResponse);
     rpc GetMagneticData (MagneticDataRequest) returns (MagneticDataResponse);
+    rpc GetOrientationData(OrientationDataRequest)returns (OrientationDataResponse);
 }
 
 message GnssDataRequest{
@@ -81,4 +82,31 @@ message Position{
     double latitude = 1;
     double longitude = 2;
     float altitude = 3;
+}
+
+message Quaternion{
+    float j = 1;
+    float i = 2;
+    float k = 3;
+    float w = 4;
+}
+
+message AlignmentData{
+    Quaternion alignment=1;
+    Quaternion correction=2;
+}
+
+message EulerAngle{
+    float yaw = 1;
+    float pitch = 2;
+    float roll = 3;
+}
+
+message OrientationDataRequest{
+
+}
+
+message OrientationDataResponse{
+    EulerAngle euler = 1;
+    Quaternion quaternion = 2;
 }

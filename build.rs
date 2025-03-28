@@ -18,4 +18,3 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .compile_protos(&["open-pi-scope.proto"], &["proto"])?;
     Ok(())
 }
- 

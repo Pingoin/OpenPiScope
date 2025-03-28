@@ -1,16 +1,25 @@
 use futures::{join, prelude::*};
-use generated::open_pi_scope::open_pi_scope_server_server::{OpenPiScopeServer, OpenPiScopeServerServer};
-use generated::open_pi_scope::{GnssDataRequest, GnssDataResponse, MagneticDataRequest, MagneticDataResponse};
-use tonic::Response;
-use std::net::SocketAddr;
+use generated::open_pi_scope::open_pi_scope_server_server::{
+    OpenPiScopeServer, OpenPiScopeServerServer,
+};
+use generated::open_pi_scope::{
+    GnssDataRequest, GnssDataResponse, MagneticDataRequest, MagneticDataResponse, OrientationDataRequest, OrientationDataResponse
+};
+use nalgebra::UnitQuaternion;
+use rppal::i2c::I2c;
 use std::error::Error;
+use std::net::SocketAddr;
+use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio_util::codec::{Framed, LinesCodec};
 use tonic::transport::Server;
+use tonic::Response;
 
 pub(crate) mod helpers;
 
 pub(crate) mod generated {
+    use nalgebra::UnitQuaternion;
+
     pub(crate) mod open_pi_scope;
 
     pub(crate) const FILE_DESCRIPTOR_SET: &[u8] = include_bytes!("generated/reflection.bin");
@@ -27,6 +36,25 @@ pub(crate) mod generated {
             }
         }
     }
+
+    impl Into<UnitQuaternion<f32>> for open_pi_scope::Quaternion {
+        fn into(self) -> UnitQuaternion<f32> {
+            UnitQuaternion::new_normalize(nalgebra::Quaternion::new(
+                self.w, self.i, self.j, self.k,
+            ))
+        }
+    }
+
+    impl From<UnitQuaternion<f32>> for open_pi_scope::Quaternion {
+        fn from(value: UnitQuaternion<f32>) -> Self {
+            open_pi_scope::Quaternion {
+                w: value.w,
+                i: value.i,
+                j: value.j,
+                k: value.k,
+            }
+        }
+    }
 }
 
 #[tokio::main]
@@ -34,7 +62,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("Starting");
     static GPS_SYSTEM: storage::Storage = storage::Storage::new();
 
-    let _res = join!(handle_gnss(&GPS_SYSTEM), handle_rpc(&GPS_SYSTEM));
+    let _res = join!(
+        handle_gnss(&GPS_SYSTEM),
+        handle_rpc(&GPS_SYSTEM),
+        handle_i2c(&GPS_SYSTEM)
+    );
     Ok(())
 }
 
@@ -70,6 +102,40 @@ async fn handle_gnss(gps: &storage::Storage) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn handle_i2c(storage: &storage::Storage) -> anyhow::Result<()> {
+    let i2c = I2c::with_bus(8).unwrap();
+
+    let mut imu = bno055::Bno055::new(i2c);
+    let mut delay = linux_embedded_hal::Delay;
+
+    imu.init(&mut delay)?;
+
+    // Enable 9-degrees-of-freedom sensor fusion mode with fast magnetometer calibration
+    imu.set_mode(bno055::BNO055OperationMode::NDOF, &mut delay)?;
+
+    loop {
+        let quat = imu.quaternion()?;
+        let dec = storage.get_magnetic_data().declination.to_radians();
+        // Rotation um Z-Achse
+        let declination_rotation =
+            UnitQuaternion::from_axis_angle(&nalgebra::Vector3::z_axis(), dec);
+        
+        let quat = UnitQuaternion::new_normalize(nalgebra::Quaternion::new(
+            quat.s, quat.v.x, quat.v.y, quat.v.z,
+        ));
+        let quat = quat* declination_rotation;
+        let (roll, pitch, yaw) = quat.euler_angles();
+        println!(
+            "roll: {}°, alt: {}°, AZ: {}°",
+            roll.to_degrees(),
+            pitch.to_degrees(),
+            yaw.to_degrees()
+        );
+        storage.update_orientation(quat.into());
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
 mod storage;
 
 struct Rpc {
@@ -93,10 +159,14 @@ impl OpenPiScopeServer for Rpc {
         &self,
         _request: tonic::Request<MagneticDataRequest>,
     ) -> Result<tonic::Response<MagneticDataResponse>, tonic::Status> {
-
-
-        Ok(Response::new(MagneticDataResponse{
+        Ok(Response::new(MagneticDataResponse {
             magnetic_data: Some(self.storage.get_magnetic_data().clone()),
         }))
+    }
+    async fn get_orientation_data(&self,_request:tonic::Request<OrientationDataRequest>) -> Result<tonic::Response<OrientationDataResponse>,tonic::Status>{
+        let (quat,euler)=self.storage.get_orientation().map(|(q,e)|(Some(q),Some(e))).unwrap_or((None,None));
+        Ok(Response::new(OrientationDataResponse{ euler: euler, quaternion: quat }
+
+        ))
     }
 }
