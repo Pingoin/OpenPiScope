@@ -23,6 +23,7 @@ bno055 = { version = "0.4.0", features = ["serde", "std"] }
 linux-embedded-hal = { version = "0.4"}
 mint = { version = "0.5.9", features = ["serde"] }
 nalgebra = "0.33.2"
+toml_edit = { version = "0.22.24", features = ["serde"] }
 
 
 [build-dependencies]

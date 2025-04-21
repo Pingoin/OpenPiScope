@@ -1,8 +1,11 @@
+use bno055::BNO055_CALIB_SIZE;
 use chrono::Datelike;
 use gpsd_proto::UnifiedResponse;
-
 use nalgebra::UnitQuaternion;
+use std::fs;
+use std::path::Path;
 use tokio_util::codec::LinesCodecError;
+use toml_edit::{value, DocumentMut};
 use world_magnetic_model::{
     time::Date,
     uom::si::{
@@ -15,14 +18,19 @@ use world_magnetic_model::{
 };
 
 use crate::{
-    generated::open_pi_scope::{AlignmentData, EulerAngle, GnssData, MagneticData, Position, Quaternion},
-    helpers::MutexBox,
+    generated::open_pi_scope::{
+        AlignmentData, EulerAngle, GnssData, MagneticData, Position, Quaternion,
+    },
+    helpers::{hex_decode, hex_encode, vec_to_calib, MutexBox},
 };
+
+const CONFIG_PATH: &str = "/boot/open-pi-scope";
 
 pub(crate) struct Storage {
     gnss_data: MutexBox<GnssData>,
     magnetic_data: MutexBox<MagneticData>,
     alingment_data: MutexBox<AlignmentData>,
+    config: MutexBox<Option<DocumentMut>>,
 }
 
 impl Storage {
@@ -55,7 +63,17 @@ impl Storage {
                 alignment: None,
                 correction: None,
             }),
+            config: MutexBox::new(None),
         }
+    }
+    pub fn load_config(&self) -> anyhow::Result<()> {
+        // Datei einlesen
+        let content = fs::read_to_string(CONFIG_PATH)?;
+        let doc = content.parse::<DocumentMut>()?;
+        // TOML-Dokument parsen (Kommentare bleiben erhalten)
+        self.config
+            .open(move |document| *document = Some(doc.clone()));
+        Ok(())
     }
 
     pub async fn update_gpsd(&self, line: String) -> Result<(), LinesCodecError> {
@@ -127,21 +145,52 @@ impl Storage {
             altitude: gnss.alt,
         })
     }
-    pub fn update_orientation(&self, orientation: Quaternion){
+    pub fn update_orientation(&self, orientation: Quaternion) {
         self.alingment_data.open(|alignment| {
             alignment.alignment = Some(orientation);
         })
     }
-    pub fn get_orientation(&self) -> Option<(Quaternion,EulerAngle)>{
+    pub fn get_orientation(&self) -> Option<(Quaternion, EulerAngle)> {
         let alignment = self.alingment_data.clone_inner();
-        let quat:UnitQuaternion<f32>= alignment.alignment?.into();
-        let quat=if let Some(correction) =  alignment.correction{
-            let correction:UnitQuaternion<f32> = correction.into();
-            quat*correction
-        }else {quat};
+        let quat: UnitQuaternion<f32> = alignment.alignment?.into();
+        let quat = if let Some(correction) = alignment.correction {
+            let correction: UnitQuaternion<f32> = correction.into();
+            quat * correction
+        } else {
+            quat
+        };
 
         let (roll, pitch, yaw) = quat.euler_angles();
-        Some((quat.into(), EulerAngle {roll:roll, pitch:pitch, yaw:yaw}))
+        Some((
+            quat.into(),
+            EulerAngle {
+                roll: roll,
+                pitch: pitch,
+                yaw: yaw,
+            },
+        ))
+    }
+    pub fn get_bno055_calib(&self) -> Option<[u8; BNO055_CALIB_SIZE]> {
+        self.config
+            .clone_inner()
+            .map(|conf| {
+                conf["sensors"]["bno055"]["calibration"].as_str().map(|s|String::from(s))
+            }).flatten()
+            .map(|string| -> [u8; 22] { vec_to_calib(hex_decode(string.as_str())) })
+    }
+    pub fn set_bno055_calib(&self, calib: &[u8; BNO055_CALIB_SIZE]) -> anyhow::Result<()> {
+        self.config.open(|config| {
+            if let Some(conf) = config {
+                conf["sensors"]["bno055"]["calibration"] = value(hex_encode(calib))
+            }
+        });
+        self.update_file()
+    }
+    pub fn update_file(&self) -> anyhow::Result<()> {
+        if let Some(doc) = self.config.clone_inner() {
+            fs::write(CONFIG_PATH, doc.to_string())?;
+        }
+
+        Ok(())
     }
 }
-

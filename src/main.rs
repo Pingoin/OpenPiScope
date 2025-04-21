@@ -15,6 +15,9 @@ use tokio_util::codec::{Framed, LinesCodec};
 use tonic::transport::Server;
 use tonic::Response;
 
+
+
+
 pub(crate) mod helpers;
 
 pub(crate) mod generated {
@@ -60,6 +63,7 @@ pub(crate) mod generated {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     println!("Starting");
+    
     static GPS_SYSTEM: storage::Storage = storage::Storage::new();
 
     let _res = join!(
