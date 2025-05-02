@@ -1,0 +1,14 @@
+[Unit]
+Description=OpenPiScope Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/open-pi-scope/open-pi-scope
+Restart=on-failure
+User=openpiscope
+Group=openpiscope
+WorkingDirectory=/opt/open-pi-scope
+
+[Install]
+WantedBy=multi-user.target
