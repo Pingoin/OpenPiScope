@@ -3,20 +3,20 @@ use generated::open_pi_scope::open_pi_scope_server_server::{
     OpenPiScopeServer, OpenPiScopeServerServer,
 };
 use generated::open_pi_scope::{
-    GnssDataRequest, GnssDataResponse, MagneticDataRequest, MagneticDataResponse, OrientationDataRequest, OrientationDataResponse
+    Broadcast, Constants, GnssDataRequest, GnssDataResponse, MagneticDataRequest,
+    MagneticDataResponse, OrientationDataRequest, OrientationDataResponse,
 };
 use nalgebra::UnitQuaternion;
+use prost::Message;
 use rppal::i2c::I2c;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::net::TcpStream;
+use tokio::net::UdpSocket;
 use tokio_util::codec::{Framed, LinesCodec};
 use tonic::transport::Server;
 use tonic::Response;
-
-
-
 
 pub(crate) mod helpers;
 
@@ -42,9 +42,7 @@ pub(crate) mod generated {
 
     impl Into<UnitQuaternion<f32>> for open_pi_scope::Quaternion {
         fn into(self) -> UnitQuaternion<f32> {
-            UnitQuaternion::new_normalize(nalgebra::Quaternion::new(
-                self.w, self.i, self.j, self.k,
-            ))
+            UnitQuaternion::new_normalize(nalgebra::Quaternion::new(self.w, self.i, self.j, self.k))
         }
     }
 
@@ -63,12 +61,13 @@ pub(crate) mod generated {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     println!("Starting");
-    
+
     static GPS_SYSTEM: storage::Storage = storage::Storage::new();
 
     let _res = join!(
         handle_gnss(&GPS_SYSTEM),
         handle_rpc(&GPS_SYSTEM),
+        handle_broadcasting(&GPS_SYSTEM),
         handle_i2c(&GPS_SYSTEM)
     );
     Ok(())
@@ -123,11 +122,11 @@ async fn handle_i2c(storage: &storage::Storage) -> anyhow::Result<()> {
         // Rotation um Z-Achse
         let declination_rotation =
             UnitQuaternion::from_axis_angle(&nalgebra::Vector3::z_axis(), dec);
-        
+
         let quat = UnitQuaternion::new_normalize(nalgebra::Quaternion::new(
             quat.s, quat.v.x, quat.v.y, quat.v.z,
         ));
-        let quat = quat* declination_rotation;
+        let quat = quat * declination_rotation;
         let (roll, pitch, yaw) = quat.euler_angles();
         println!(
             "roll: {}°, alt: {}°, AZ: {}°",
@@ -136,6 +135,20 @@ async fn handle_i2c(storage: &storage::Storage) -> anyhow::Result<()> {
             yaw.to_degrees()
         );
         storage.update_orientation(quat.into());
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+async fn handle_broadcasting(storage: &storage::Storage) -> anyhow::Result<()> {
+    let socket = UdpSocket::bind("0.0.0.0:0").await?; // ausgehend, beliebiger Port
+    socket.set_broadcast(true)?;
+
+    loop {
+        let data = Broadcast {
+            magic_number: Constants::MagicNumber as u32,
+        }
+        .encode_to_vec();
+        socket.send_to(&data, "192.168.178.255:12961").await?;
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
@@ -167,10 +180,18 @@ impl OpenPiScopeServer for Rpc {
             magnetic_data: Some(self.storage.get_magnetic_data().clone()),
         }))
     }
-    async fn get_orientation_data(&self,_request:tonic::Request<OrientationDataRequest>) -> Result<tonic::Response<OrientationDataResponse>,tonic::Status>{
-        let (quat,euler)=self.storage.get_orientation().map(|(q,e)|(Some(q),Some(e))).unwrap_or((None,None));
-        Ok(Response::new(OrientationDataResponse{ euler: euler, quaternion: quat }
-
-        ))
+    async fn get_orientation_data(
+        &self,
+        _request: tonic::Request<OrientationDataRequest>,
+    ) -> Result<tonic::Response<OrientationDataResponse>, tonic::Status> {
+        let (quat, euler) = self
+            .storage
+            .get_orientation()
+            .map(|(q, e)| (Some(q), Some(e)))
+            .unwrap_or((None, None));
+        Ok(Response::new(OrientationDataResponse {
+            euler: euler,
+            quaternion: quat,
+        }))
     }
 }

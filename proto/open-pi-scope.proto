@@ -110,3 +110,13 @@ message OrientationDataResponse{
     EulerAngle euler = 1;
     Quaternion quaternion = 2;
 }
+
+message Broadcast{
+    uint32 magicNumber =1;
+}
+
+enum Constants{
+    Null=0;
+    MagicNumber = 0x8BDD542;
+    BroadcastPort = 12961;
+}
