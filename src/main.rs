@@ -9,6 +9,7 @@ use generated::open_pi_scope::{
 use nalgebra::UnitQuaternion;
 use prost::Message;
 use rppal::i2c::I2c;
+use static_cell::StaticCell;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -19,6 +20,8 @@ use tonic::transport::Server;
 use tonic::Response;
 
 pub(crate) mod helpers;
+pub mod mutex_box;
+mod storage;
 
 pub(crate) mod generated {
     use nalgebra::UnitQuaternion;
@@ -58,17 +61,21 @@ pub(crate) mod generated {
     }
 }
 
+static STORAGE: StaticCell<storage::Storage> = StaticCell::new();
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     println!("Starting");
 
-    static GPS_SYSTEM: storage::Storage = storage::Storage::new();
+    let store = STORAGE.init(storage::Storage::new());
+
+    store.load_config().await?;
 
     let _res = join!(
-        handle_gnss(&GPS_SYSTEM),
-        handle_rpc(&GPS_SYSTEM),
-        handle_broadcasting(&GPS_SYSTEM),
-        handle_i2c(&GPS_SYSTEM)
+        handle_gnss(store),
+        handle_rpc(store),
+        handle_broadcasting(store),
+        handle_i2c(store)
     );
     Ok(())
 }
@@ -116,9 +123,17 @@ async fn handle_i2c(storage: &storage::Storage) -> anyhow::Result<()> {
     // Enable 9-degrees-of-freedom sensor fusion mode with fast magnetometer calibration
     imu.set_mode(bno055::BNO055OperationMode::NDOF, &mut delay)?;
 
+    let calib= storage.get_bno055_calib().await;
+
+
+    if let Some(calib) = calib {
+        imu.set_calibration_profile(calib,&mut delay)?;
+    }
+   
+
     loop {
         let quat = imu.quaternion()?;
-        let dec = storage.get_magnetic_data().declination.to_radians();
+        let dec = storage.get_magnetic_data().await.declination.to_radians();
         // Rotation um Z-Achse
         let declination_rotation =
             UnitQuaternion::from_axis_angle(&nalgebra::Vector3::z_axis(), dec);
@@ -134,12 +149,17 @@ async fn handle_i2c(storage: &storage::Storage) -> anyhow::Result<()> {
             pitch.to_degrees(),
             yaw.to_degrees()
         );
-        storage.update_orientation(quat.into());
+        storage.update_orientation(quat.into()).await;
+
+        let calib=imu.calibration_profile(&mut delay)?;
+
+        storage.set_bno055_calib(calib).await?;
+
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 
-async fn handle_broadcasting(storage: &storage::Storage) -> anyhow::Result<()> {
+async fn handle_broadcasting(_storage: &storage::Storage) -> anyhow::Result<()> {
     let socket = UdpSocket::bind("0.0.0.0:0").await?; // ausgehend, beliebiger Port
     socket.set_broadcast(true)?;
 
@@ -153,8 +173,6 @@ async fn handle_broadcasting(storage: &storage::Storage) -> anyhow::Result<()> {
     }
 }
 
-mod storage;
-
 struct Rpc {
     storage: &'static storage::Storage,
 }
@@ -165,8 +183,8 @@ impl OpenPiScopeServer for Rpc {
         &self,
         _request: tonic::Request<GnssDataRequest>,
     ) -> Result<tonic::Response<GnssDataResponse>, tonic::Status> {
-        let data = self.storage.get_gnss_data();
-
+        let data = self.storage.get_gnss_data().await;
+        println!("GNSS Data: {:?}", &data);
         Ok(tonic::Response::new(GnssDataResponse {
             gnss_data: Some(data.clone()),
         }))
@@ -177,7 +195,7 @@ impl OpenPiScopeServer for Rpc {
         _request: tonic::Request<MagneticDataRequest>,
     ) -> Result<tonic::Response<MagneticDataResponse>, tonic::Status> {
         Ok(Response::new(MagneticDataResponse {
-            magnetic_data: Some(self.storage.get_magnetic_data().clone()),
+            magnetic_data: Some(self.storage.get_magnetic_data().await.clone()),
         }))
     }
     async fn get_orientation_data(
@@ -187,6 +205,7 @@ impl OpenPiScopeServer for Rpc {
         let (quat, euler) = self
             .storage
             .get_orientation()
+            .await
             .map(|(q, e)| (Some(q), Some(e)))
             .unwrap_or((None, None));
         Ok(Response::new(OrientationDataResponse {

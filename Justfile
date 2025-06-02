@@ -12,10 +12,13 @@ setup-folder:
 compile:
     cross build --target aarch64-unknown-linux-gnu --release
 
-first-upload: compile
+compress: compile
+    upx --best --lzma target/aarch64-unknown-linux-gnu/release/open-pi-scope
+
+first-upload: compress
     just scp-upload "target/aarch64-unknown-linux-gnu/release/open-pi-scope" "/opt/open-pi-scope/"
 
-upload: compile
+upload: compress
     just ssh-run "sudo systemctl stop open-pi-scope"
     just scp-upload "target/aarch64-unknown-linux-gnu/release/open-pi-scope" "/opt/open-pi-scope/"
     just ssh-run "sudo systemctl start open-pi-scope"
@@ -30,6 +33,7 @@ install-service: first-upload
     just ssh-run "sudo systemctl start open-pi-scope"
 
 run: upload
+    just ssh-run "sudo systemctl stop open-pi-scope"
     just ssh-run "/opt/open-pi-scope/open-pi-scope"
 
 start:
