@@ -26,6 +26,7 @@ use crate::{
 
 const CONFIG_PATH: &str = "/boot/open-pi-scope/config.toml";
 
+#[derive(Debug)]
 pub(crate) struct Storage {
     gnss_data: MutexBox<GnssData>,
     magnetic_data: MutexBox<MagneticData>,

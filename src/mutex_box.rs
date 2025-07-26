@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::{Mutex, Notify};
 
+#[derive(Debug)]
 pub struct MutexBox<T> {
     inner: Arc<Mutex<Option<T>>>,
     taken: Arc<Mutex<bool>>,

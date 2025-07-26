@@ -1,4 +1,5 @@
-set dotenv-load
+set dotenv-load:=true
+set dotenv-required:=true
 
 ssh-run cmd:
     sshpass -p$OPS_PASSWORD ssh $OPS_USER@$OPS_SERVER "{{cmd}}"

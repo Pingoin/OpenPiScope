@@ -75,7 +75,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         handle_gnss(store),
         handle_rpc(store),
         handle_broadcasting(store),
-        handle_i2c(store)
+        handle_i2c(store),
+        alpaca::handle_alpaca(store)
     );
     Ok(())
 }
@@ -214,3 +215,6 @@ impl OpenPiScopeServer for Rpc {
         }))
     }
 }
+
+
+mod alpaca;
