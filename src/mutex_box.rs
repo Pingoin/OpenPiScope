@@ -9,8 +9,6 @@ pub struct MutexBox<T> {
 }
 
 impl<T> MutexBox<T>
-where
-    T: Clone,
 {
     pub fn new() -> MutexBox<T> {
         Self {
@@ -82,11 +80,11 @@ where
 
     pub async fn open<F, R>(&self, f: F) -> Option<R>
     where
-        F: FnOnce(T) -> (T, R) + Clone,
+        F: FnOnce(T) -> (T, R),
     {
         loop {
             if !self.is_taken().await {
-                return self.take_sync(f.clone()).await;
+                return self.take_sync(f).await;
             }
             self.notify.notified().await;
         }
@@ -96,21 +94,11 @@ where
         loop {
             if !self.is_taken().await {
                 let mut lock = self.inner.lock().await;
-                *lock = value.clone();
+                *lock = value;
                 return ;
             }
             self.notify.notified().await;
         }
-    }
-
-    pub async fn clone_inner(&self) -> Option<T> {
-        let res = self
-            .open(|inner| {
-                let output = inner.clone();
-                (inner, output)
-            })
-            .await;
-        res
     }
 
     /// Gibt eine clonbare Referenz mit `'static`-Lifetime zurück.
@@ -120,5 +108,20 @@ where
             taken: Arc::clone(&self.taken),
             notify: Arc::clone(&self.notify),
         }
+    }
+}
+
+impl<T> MutexBox<T>
+where
+    T: Clone,
+{
+    pub async fn clone_inner(&self) -> Option<T> {
+        let res = self
+            .open(|inner| {
+                let output = inner.clone();
+                (inner, output)
+            })
+            .await;
+        res
     }
 }

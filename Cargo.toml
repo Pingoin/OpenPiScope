@@ -27,6 +27,8 @@ toml_edit = { version = "0.23.2", features = ["serde"] }
 static_cell = "2.1.1"
 async-trait = "^0.1.88"
 ascom-alpaca = { version = "1.0.0-beta.3", features = ["server","telescope"] }
+embedded-hal = "=1.0.0"
+lazy_static = "1.5.0"
 
 [build-dependencies]
 protoc-bin-vendored = "3"

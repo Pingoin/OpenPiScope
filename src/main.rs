@@ -71,6 +71,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     store.load_config().await?;
 
+    let bla=alt_az_driver::alt_az_driver(); // Initialize the AltAz driver
+    let driver= alt_az_driver::AltAzDriver::new(store)?;
+    
+    bla.set(Some(driver)).await;
     let _res = join!(
         handle_gnss(store),
         handle_rpc(store),
@@ -124,13 +128,11 @@ async fn handle_i2c(storage: &storage::Storage) -> anyhow::Result<()> {
     // Enable 9-degrees-of-freedom sensor fusion mode with fast magnetometer calibration
     imu.set_mode(bno055::BNO055OperationMode::NDOF, &mut delay)?;
 
-    let calib= storage.get_bno055_calib().await;
-
+    let calib = storage.get_bno055_calib().await;
 
     if let Some(calib) = calib {
-        imu.set_calibration_profile(calib,&mut delay)?;
+        imu.set_calibration_profile(calib, &mut delay)?;
     }
-   
 
     loop {
         let quat = imu.quaternion()?;
@@ -152,7 +154,7 @@ async fn handle_i2c(storage: &storage::Storage) -> anyhow::Result<()> {
         );
         storage.update_orientation(quat.into()).await;
 
-        let calib=imu.calibration_profile(&mut delay)?;
+        let calib = imu.calibration_profile(&mut delay)?;
 
         storage.set_bno055_calib(calib).await?;
 
@@ -216,5 +218,10 @@ impl OpenPiScopeServer for Rpc {
     }
 }
 
-
 mod alpaca;
+mod stepper_axis;
+mod stepper_motor;
+
+mod alt_az_driver;
+
+pub(crate) mod telescope_position;

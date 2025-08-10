@@ -1,11 +1,12 @@
-use ascom_alpaca::api::{AlignmentMode, Axis, Device, Telescope};
-use ascom_alpaca::{ASCOMError, ASCOMResult};
+use ascom_alpaca::api::{AlignmentMode, Device, Telescope};
+use ascom_alpaca::{ ASCOMResult};
 use async_trait::async_trait;
-use std::convert::Infallible;
+use  crate::alt_az_driver::alt_az_driver;
+use crate::telescope_position::TelescopePosition;
 
 use crate::storage;
 
-pub(crate) async fn handle_alpaca(storage: &'static storage::Storage) -> anyhow::Result<()> {
+pub(crate) async fn handle_alpaca(storage: &'static storage::Storage,) -> anyhow::Result<()> {
     let mut server = ascom_alpaca::Server {
         // helper macro to populate server information from your own Cargo.toml
         info: ascom_alpaca::api::CargoServerInfo!(),
@@ -17,7 +18,7 @@ pub(crate) async fn handle_alpaca(storage: &'static storage::Storage) -> anyhow:
     server.listen_addr.set_port(8000);
 
     // Create and register your device(s).
-    server.devices.register(AlpacaTelescope { storage });
+    server.devices.register(AlpacaTelescope { storage});
 
     // Start the infinite server loop.
     server
@@ -75,6 +76,11 @@ impl Telescope for AlpacaTelescope {
     async fn slew_to_alt_az(&self, azimuth: f64, altitude: f64) -> ASCOMResult<()> {
         // Implement the logic to slew to the specified azimuth and altitude
         println!("Slewing to Azimuth: {}, Altitude: {}", azimuth, altitude);
+        let res=alt_az_driver().open_async(async |driver| {
+            let target = TelescopePosition::new_alt_az(altitude as f32, azimuth as f32);
+            let res=driver.set_target_position(target).await;
+            (driver, res)
+        }).await;
         Ok(())
     }
 
