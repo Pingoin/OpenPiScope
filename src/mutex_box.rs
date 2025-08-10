@@ -111,6 +111,19 @@ impl<T> MutexBox<T>
     }
 }
 
+impl <T> Clone for MutexBox<T>
+where
+    T: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            inner: Arc::clone(&self.inner),
+            taken: Arc::clone(&self.taken),
+            notify: Arc::clone(&self.notify),
+        }
+    }
+}
+
 impl<T> MutexBox<T>
 where
     T: Clone,

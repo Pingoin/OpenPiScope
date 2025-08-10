@@ -71,16 +71,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     store.load_config().await?;
 
-    let bla=alt_az_driver::alt_az_driver(); // Initialize the AltAz driver
-    let driver= alt_az_driver::AltAzDriver::new(store)?;
-    
-    bla.set(Some(driver)).await;
+
     let _res = join!(
         handle_gnss(store),
         handle_rpc(store),
         handle_broadcasting(store),
         handle_i2c(store),
-        alpaca::handle_alpaca(store)
+        alpaca::handle_alpaca(store),
+        alt_az_driver::run_alt_az_driver(store)
     );
     Ok(())
 }
@@ -146,12 +144,6 @@ async fn handle_i2c(storage: &storage::Storage) -> anyhow::Result<()> {
         ));
         let quat = quat * declination_rotation;
         let (roll, pitch, yaw) = quat.euler_angles();
-        println!(
-            "roll: {}°, alt: {}°, AZ: {}°",
-            roll.to_degrees(),
-            pitch.to_degrees(),
-            yaw.to_degrees()
-        );
         storage.update_orientation(quat.into()).await;
 
         let calib = imu.calibration_profile(&mut delay)?;
@@ -221,7 +213,5 @@ impl OpenPiScopeServer for Rpc {
 mod alpaca;
 mod stepper_axis;
 mod stepper_motor;
-
 mod alt_az_driver;
-
 pub(crate) mod telescope_position;

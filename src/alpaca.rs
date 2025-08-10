@@ -50,7 +50,7 @@ impl Device for AlpacaTelescope {
         Ok(true) // Replace with actual connection logic
     }
 
-    async fn set_connected(&self, connected: bool) -> ASCOMResult {
+    async fn set_connected(&self, _connected: bool) -> ASCOMResult {
         Ok(()) // Replace with actual connection logic
     }
 
@@ -76,7 +76,7 @@ impl Telescope for AlpacaTelescope {
     async fn slew_to_alt_az(&self, azimuth: f64, altitude: f64) -> ASCOMResult<()> {
         // Implement the logic to slew to the specified azimuth and altitude
         println!("Slewing to Azimuth: {}, Altitude: {}", azimuth, altitude);
-        let res=alt_az_driver().open_async(async |driver| {
+        let res=alt_az_driver().open_async(async |mut driver| {
             let target = TelescopePosition::new_alt_az(altitude as f32, azimuth as f32);
             let res=driver.set_target_position(target).await;
             (driver, res)
