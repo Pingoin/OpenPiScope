@@ -18,7 +18,7 @@ use world_magnetic_model::{
 
 use crate::{
     generated::open_pi_scope::{
-        AlignmentData, EulerAngle, GnssData, MagneticData, Position, Quaternion,
+        AlignmentData, EulerAngle, GnssData, MagneticData,  Position, Quaternion,
     },
     helpers::{hex_decode, hex_encode, vec_to_calib},
     mutex_box::MutexBox,
@@ -73,7 +73,7 @@ impl Storage {
                             data.estimated_error_altitude = t.epv.unwrap_or_default();
                             data.track = t.track.unwrap_or_default();
                             data.speed = t.speed.unwrap_or_default();
-                            data.mode = t.mode as i32;
+                            data.mode = t.mode.into();
                             data.climb = t.climb.unwrap_or_default();
                             data.estimated_error_track = t.epd.unwrap_or_default();
                             data.estimated_error_speed = t.eps.unwrap_or_default();

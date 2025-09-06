@@ -1,13 +1,11 @@
+use embedded_hal::spi::Mode;
 use futures::{join, prelude::*};
-use generated::open_pi_scope::open_pi_scope_server_server::{
-    OpenPiScopeServer, OpenPiScopeServerServer,
-};
+
 use generated::open_pi_scope::{
-    Broadcast, Constants, GnssDataRequest, GnssDataResponse, MagneticDataRequest,
-    MagneticDataResponse, OrientationDataRequest, OrientationDataResponse,
+    Broadcast, Constants,
 };
 use nalgebra::UnitQuaternion;
-use prost::Message;
+
 use rppal::i2c::I2c;
 use static_cell::StaticCell;
 use std::error::Error;
@@ -16,8 +14,6 @@ use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::net::UdpSocket;
 use tokio_util::codec::{Framed, LinesCodec};
-use tonic::transport::Server;
-use tonic::Response;
 
 pub(crate) mod helpers;
 pub mod mutex_box;
@@ -26,9 +22,7 @@ mod storage;
 pub(crate) mod generated {
     use nalgebra::UnitQuaternion;
 
-    pub(crate) mod open_pi_scope;
 
-    pub(crate) const FILE_DESCRIPTOR_SET: &[u8] = include_bytes!("generated/reflection.bin");
 
     impl From<gpsd_proto::Satellite> for open_pi_scope::Satellite {
         fn from(value: gpsd_proto::Satellite) -> Self {
@@ -38,7 +32,7 @@ pub(crate) mod generated {
                 azimuth: value.az.unwrap_or_default(),
                 signal_strength: value.ss.unwrap_or_default(),
                 used: value.used,
-                system: value.gnssid.unwrap_or_default() as i32,
+                system: value.gnssid.unwrap_or_default().into(),
             }
         }
     }
@@ -59,7 +53,13 @@ pub(crate) mod generated {
             }
         }
     }
+
+
 }
+
+
+
+    pub(crate) mod open_pi_scope;
 
 static STORAGE: StaticCell<storage::Storage> = StaticCell::new();
 
@@ -71,10 +71,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     store.load_config().await?;
 
-
     let _res = join!(
         handle_gnss(store),
-        handle_rpc(store),
+        handle_web(store),
         handle_broadcasting(store),
         handle_i2c(store),
         alpaca::handle_alpaca(store),
@@ -83,26 +82,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn handle_rpc(gps_system: &'static storage::Storage) -> anyhow::Result<()> {
-    let addr = "0.0.0.0:50051".parse()?;
-
-    let rpc = Rpc {
-        storage: gps_system,
-    };
-    let reflection_1 = tonic_reflection::server::Builder::configure()
-        .register_encoded_file_descriptor_set(generated::FILE_DESCRIPTOR_SET)
-        .build_v1()?;
-    let reflection_1a = tonic_reflection::server::Builder::configure()
-        .register_encoded_file_descriptor_set(generated::FILE_DESCRIPTOR_SET)
-        .build_v1alpha()?;
-
-    Server::builder()
-        .add_service(OpenPiScopeServerServer::new(rpc))
-        .add_service(reflection_1)
-        .add_service(reflection_1a)
-        .serve(addr)
-        .await?;
-
+async fn handle_web(_storage: &'static storage::Storage) -> anyhow::Result<()> {
     Ok(())
 }
 
@@ -143,7 +123,7 @@ async fn handle_i2c(storage: &storage::Storage) -> anyhow::Result<()> {
             quat.s, quat.v.x, quat.v.y, quat.v.z,
         ));
         let quat = quat * declination_rotation;
-        let (roll, pitch, yaw) = quat.euler_angles();
+        let (_roll, _pitch, _yaw) = quat.euler_angles();
         storage.update_orientation(quat.into()).await;
 
         let calib = imu.calibration_profile(&mut delay)?;
@@ -159,10 +139,9 @@ async fn handle_broadcasting(_storage: &storage::Storage) -> anyhow::Result<()> 
     socket.set_broadcast(true)?;
 
     loop {
-        let data = Broadcast {
+        let data = serde_json::to_vec(&Broadcast {
             magic_number: Constants::MagicNumber as u32,
-        }
-        .encode_to_vec();
+        })?;
         socket.send_to(&data, "192.168.178.255:12961").await?;
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
@@ -172,7 +151,7 @@ struct Rpc {
     storage: &'static storage::Storage,
 }
 
-#[tonic::async_trait]
+/* #[tonic::async_trait]
 impl OpenPiScopeServer for Rpc {
     async fn get_gnss_data(
         &self,
@@ -209,9 +188,9 @@ impl OpenPiScopeServer for Rpc {
         }))
     }
 }
-
+ */
 mod alpaca;
+mod alt_az_driver;
 mod stepper_axis;
 mod stepper_motor;
-mod alt_az_driver;
 pub(crate) mod telescope_position;
