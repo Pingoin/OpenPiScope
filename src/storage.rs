@@ -1,8 +1,14 @@
 use bno055::BNO055Calibration;
 use chrono::Datelike;
 use gpsd_proto::UnifiedResponse;
-use nalgebra::UnitQuaternion;
-use std::fs;
+use nalgebra::{Quaternion, UnitQuaternion};
+use open_pi_scope::{
+    alignment::{AlignmentData, EulerAngle},
+    gnss::{GnssData, Position},
+    magnetic::MagneticData,
+};
+use std::{fs, sync::{Arc, OnceLock}};
+use tokio::sync::Mutex;
 use tokio_util::codec::LinesCodecError;
 use toml_edit::{value, DocumentMut};
 use world_magnetic_model::{
@@ -16,31 +22,30 @@ use world_magnetic_model::{
     GeomagneticField,
 };
 
-use crate::{
-    generated::open_pi_scope::{
-        AlignmentData, EulerAngle, GnssData, MagneticData,  Position, Quaternion,
-    },
-    helpers::{hex_decode, hex_encode, vec_to_calib},
-    mutex_box::MutexBox,
-};
+use crate::helpers::{hex_decode, hex_encode, vec_to_calib};
 
 const CONFIG_PATH: &str = "/boot/open-pi-scope/config.toml";
 
+pub(crate) fn storage() -> &'static Storage {
+    static STORAGE: OnceLock<Storage> = OnceLock::new();
+    STORAGE.get_or_init(|| Storage::new())
+}
+
 #[derive(Debug)]
 pub(crate) struct Storage {
-    gnss_data: MutexBox<GnssData>,
-    magnetic_data: MutexBox<MagneticData>,
-    alingment_data: MutexBox<AlignmentData>,
-    config: MutexBox<DocumentMut>,
+    pub(crate) gnss_data: GnssData,
+    pub(crate) magnetic_data: MagneticData,
+    pub(crate) alingment_data: AlignmentData,
+    config: Arc<Mutex<DocumentMut>>,
 }
 
 impl Storage {
     pub fn new() -> Self {
         Storage {
-            gnss_data: MutexBox::new(),
-            magnetic_data: MutexBox::new(),
-            alingment_data: MutexBox::new(),
-            config: MutexBox::new(),
+            gnss_data: GnssData::default(),
+            magnetic_data: MagneticData::default(),
+            alingment_data: AlignmentData::default(),
+            config: Arc::new(Mutex::new(DocumentMut::new())),
         }
     }
     pub async fn load_config(&self) -> anyhow::Result<()> {
@@ -48,12 +53,8 @@ impl Storage {
         let content = fs::read_to_string(CONFIG_PATH)?;
         let doc = content.parse::<DocumentMut>()?;
         // TOML-Dokument parsen (Kommentare bleiben erhalten)
-        self.config.set(Some(doc.clone())).await;
-        self.gnss_data.set(Some(GnssData::default())).await;
-        self.magnetic_data.set(Some(MagneticData::default())).await;
-        self.alingment_data
-            .set(Some(AlignmentData::default()))
-            .await;
+        let mut document = self.config.lock().await;
+        *document = doc.clone();
         Ok(())
     }
 
@@ -61,39 +62,51 @@ impl Storage {
         match serde_json::from_str(&line) {
             Ok(rd) => match rd {
                 UnifiedResponse::Tpv(t) => {
+                    self.gnss_data.set_lat(t.lat.unwrap_or_default()).await;
+                    self.gnss_data.set_lon(t.lon.unwrap_or_default()).await;
+                    self.gnss_data.set_alt(t.alt.unwrap_or_default()).await;
                     self.gnss_data
-                        .open(|mut data| {
-                            data.lat = t.lat.unwrap_or_default();
-                            data.lon = t.lon.unwrap_or_default();
-                            data.alt = t.alt.unwrap_or_default();
-                            data.leap_seconds = t.leapseconds.unwrap_or_default();
-                            data.estimated_error_longitude = t.epx.unwrap_or_default();
-                            data.estimated_error_latitude = t.epy.unwrap_or_default();
-                            data.estimated_error_plane = t.eph.unwrap_or_default();
-                            data.estimated_error_altitude = t.epv.unwrap_or_default();
-                            data.track = t.track.unwrap_or_default();
-                            data.speed = t.speed.unwrap_or_default();
-                            data.mode = t.mode.into();
-                            data.climb = t.climb.unwrap_or_default();
-                            data.estimated_error_track = t.epd.unwrap_or_default();
-                            data.estimated_error_speed = t.eps.unwrap_or_default();
-                            data.estimated_error_climb = t.epc.unwrap_or_default();
-                            println!("Fix: {} / Sattelites: {}", t.mode, data.satellites.len());
-                            (data, ())
-                        })
+                        .set_leap_seconds(t.leapseconds.unwrap_or_default())
                         .await;
+                    self.gnss_data
+                        .set_estimated_error_altitude(t.epv.unwrap_or_default())
+                        .await;
+                    self.gnss_data
+                        .set_estimated_error_climb(t.epc.unwrap_or_default())
+                        .await;
+                    self.gnss_data
+                        .set_estimated_error_speed(t.eps.unwrap_or_default())
+                        .await;
+                    self.gnss_data
+                        .set_estimated_error_track(t.epd.unwrap_or_default())
+                        .await;
+                    self.gnss_data.set_speed(t.speed.unwrap_or_default()).await;
+                    self.gnss_data.set_track(t.track.unwrap_or_default()).await;
+                    self.gnss_data.set_mode(t.mode.into()).await;
+                    self.gnss_data.set_climb(t.climb.unwrap_or_default()).await;
+                    self.gnss_data
+                        .set_estimated_error_plane(t.eph.unwrap_or_default())
+                        .await;
+                    self.gnss_data
+                        .set_estimated_error_latitude(t.epy.unwrap_or_default())
+                        .await;
+                    self.gnss_data
+                        .set_estimated_error_longitude(t.epx.unwrap_or_default())
+                        .await;
+
+                    println!(
+                        "Fix: {} / Sattelites: {}",
+                        t.mode,
+                        self.gnss_data.get_satellites().await.len()
+                    );
+
                     self.update_magnetic().await;
                 }
                 UnifiedResponse::Sky(s) => {
-                    self.gnss_data
-                        .open(|mut data| {
-                            if let Some(sats) = s.satellites.clone() {
-                                data.satellites =
-                                    sats.iter().map(|sat| sat.clone().into()).collect();
-                            }
-                            (data, ())
-                        })
-                        .await;
+                    if let Some(sats) = s.satellites.clone() {
+                        let sats = sats.iter().map(|sat| sat.clone().into()).collect();
+                        self.gnss_data.set_satellites(sats).await;
+                    }
                 }
                 _ => {}
             },
@@ -105,60 +118,48 @@ impl Storage {
     }
     async fn update_magnetic(&self) {
         let pos = self.get_position().await;
-        self.magnetic_data
-            .open(|mut mag| {
-                let now = chrono::Utc::now();
 
-                if let Ok(geomagnetic_field) = GeomagneticField::new(
-                    Length::new::<meter>(pos.altitude),         // height
-                    Angle::new::<degree>(pos.latitude as f32),  // lat
-                    Angle::new::<degree>(pos.longitude as f32), // lon
-                    Date::from_ordinal_date(now.year(), now.ordinal() as u16).unwrap_or(Date::MIN), // date
-                ) {
-                    mag.declination = geomagnetic_field.declination().get::<degree>();
-                    mag.inclination = geomagnetic_field.inclination().get::<degree>();
-                    mag.magnetic_flux_density = geomagnetic_field.f().get::<microtesla>();
-                };
-                (mag, ())
-            })
-            .await;
+        let now = chrono::Utc::now();
+
+        if let Ok(geomagnetic_field) = GeomagneticField::new(
+            Length::new::<meter>(pos.altitude),         // height
+            Angle::new::<degree>(pos.latitude as f32),  // lat
+            Angle::new::<degree>(pos.longitude as f32), // lon
+            Date::from_ordinal_date(now.year(), now.ordinal() as u16).unwrap_or(Date::MIN), // date
+        ) {
+            self.magnetic_data
+                .set_declination(geomagnetic_field.declination().get::<degree>())
+                .await;
+            self.magnetic_data
+                .set_inclination(geomagnetic_field.inclination().get::<degree>())
+                .await;
+            self.magnetic_data
+                .set_magnetic_flux_density(geomagnetic_field.f().get::<microtesla>())
+                .await;
+        };
     }
-    pub async fn get_gnss_data(&self) -> GnssData {
-        let gnss_data = self.gnss_data.clone_inner().await;
 
-        gnss_data.unwrap_or_default()
+    pub async fn get_gnss_data(&self) -> GnssData {
+        self.gnss_data.clone()
     }
     pub async fn get_magnetic_data(&self) -> MagneticData {
-        self.magnetic_data.clone_inner().await.unwrap_or_default()
+        self.magnetic_data.clone()
     }
     pub async fn get_position(&self) -> Position {
-        self.gnss_data
-            .open(|gnss| {
-                (
-                    gnss.clone(),
-                    Position {
-                        latitude: gnss.lat,
-                        longitude: gnss.lon,
-                        altitude: gnss.alt,
-                    },
-                )
-            })
-            .await
-            .unwrap_or_default()
+        Position {
+            latitude: self.gnss_data.get_lat().await,
+            longitude: self.gnss_data.get_lon().await,
+            altitude: self.gnss_data.get_alt().await,
+        }
     }
-    pub async fn update_orientation(&self, orientation: Quaternion) {
-        self.alingment_data
-            .open(|mut alignment| {
-                alignment.alignment = Some(orientation);
-                (alignment, ())
-            })
-            .await;
+    pub async fn update_orientation(&self, orientation: UnitQuaternion<f32>) {
+        self.alingment_data.set_alignment(Some(orientation)).await;
     }
-    pub async fn get_orientation(&self) -> Option<(Quaternion, EulerAngle)> {
-        let alignment = self.alingment_data.clone_inner().await?;
-        let quat: UnitQuaternion<f32> = alignment.alignment?.into();
-        let quat = if let Some(correction) = alignment.correction {
-            let correction: UnitQuaternion<f32> = correction.into();
+
+    pub async fn get_orientation(&self) -> Option<(Quaternion<f32>, EulerAngle)> {
+        let quat: UnitQuaternion<f32> =self.alingment_data.get_alignment().await?;
+        let quat = if let Some(correction) = self.alingment_data.get_correction().await {
+            let correction: UnitQuaternion<f32> = correction;
             quat * correction
         } else {
             quat
@@ -166,7 +167,7 @@ impl Storage {
 
         let (roll, pitch, yaw) = quat.euler_angles();
         Some((
-            quat.into(),
+            quat.quaternion().clone(),
             EulerAngle {
                 roll: roll,
                 pitch: pitch,
@@ -175,32 +176,23 @@ impl Storage {
         ))
     }
     pub async fn get_bno055_calib(&self) -> Option<BNO055Calibration> {
-        self.config
-            .clone_inner()
-            .await
-            .map(|conf| {
-                conf["sensors"]["bno055"]["calibration"]
-                    .as_str()
-                    .map(|s| String::from(s))
-            })
-            .flatten()
+        let document = self.config.lock().await;
+
+        document["sensors"]["bno055"]["calibration"]
+            .as_str()
+            .map(|s| String::from(s))
             .map(|string| -> BNO055Calibration { vec_to_calib(hex_decode(string.as_str())) })
     }
     pub async fn set_bno055_calib(&self, calib: BNO055Calibration) -> anyhow::Result<()> {
-        self.config
-            .open(|mut config| {
-                config["sensors"]["bno055"]["calibration"] = value(hex_encode(calib.as_bytes()));
+        let mut document = self.config.lock().await;
 
-                (config, ())
-            })
-            .await;
+        document["sensors"]["bno055"]["calibration"] = value(hex_encode(calib.as_bytes()));
         self.update_file().await
     }
     pub async fn update_file(&self) -> anyhow::Result<()> {
-        if let Some(doc) = self.config.clone_inner().await {
-            fs::write(CONFIG_PATH, doc.to_string())?;
-        }
-
+        let document = self.config.lock().await;
+        let string = document.to_string();
+        fs::write(CONFIG_PATH, string)?;
         Ok(())
     }
 }

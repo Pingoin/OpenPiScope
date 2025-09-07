@@ -19,15 +19,15 @@ rppal = { version = "0.22.1", features = ["hal"] }
 bno055 = { version = "0.4.0", features = ["serde", "std"] }
 linux-embedded-hal = { version = "0.4"}
 mint = { version = "0.5.9", features = ["serde"] }
-nalgebra = "0.34.0"
+nalgebra = {version="0.34.0", features = ["serde-serialize"]}
 toml_edit = { version = "0.23.4", features = ["serde"] }
 static_cell = "2.1.1"
 async-trait = "0.1.89"
 ascom-alpaca = { version = "1.0.0-beta.3", features = ["server","telescope"] }
 embedded-hal = "=1.0.0"
 lazy_static = "1.5.0"
-atomic_struct = "0.1.5"
-atomic_struct_core = "0.1.5"
+atomic_struct = {version="0.1.5", features = ["serde"]}
+atomic_struct_core = {version="0.1.5", features = ["serde"]}
 # OpenAPI (Swagger)
 utoipa = { version = "5.4.0", features = ["axum_extras","debug"] }
 utoipa-swagger-ui = {version="9.0.2", features = ["axum"] }

@@ -1,65 +1,17 @@
-use embedded_hal::spi::Mode;
 use futures::{join, prelude::*};
 
-use generated::open_pi_scope::{
-    Broadcast, Constants,
-};
 use nalgebra::UnitQuaternion;
 
+use open_pi_scope::{Broadcast, MAGIC_NUMBER};
 use rppal::i2c::I2c;
 use static_cell::StaticCell;
-use std::error::Error;
-use std::net::SocketAddr;
-use std::time::Duration;
-use tokio::net::TcpStream;
-use tokio::net::UdpSocket;
+use std::{error::Error, net::SocketAddr, time::Duration};
+use tokio::net::{TcpStream, UdpSocket};
 use tokio_util::codec::{Framed, LinesCodec};
 
 pub(crate) mod helpers;
-pub mod mutex_box;
+
 mod storage;
-
-pub(crate) mod generated {
-    use nalgebra::UnitQuaternion;
-
-
-
-    impl From<gpsd_proto::Satellite> for open_pi_scope::Satellite {
-        fn from(value: gpsd_proto::Satellite) -> Self {
-            open_pi_scope::Satellite {
-                prn: value.prn as i32,
-                elevation: value.el.unwrap_or_default(),
-                azimuth: value.az.unwrap_or_default(),
-                signal_strength: value.ss.unwrap_or_default(),
-                used: value.used,
-                system: value.gnssid.unwrap_or_default().into(),
-            }
-        }
-    }
-
-    impl Into<UnitQuaternion<f32>> for open_pi_scope::Quaternion {
-        fn into(self) -> UnitQuaternion<f32> {
-            UnitQuaternion::new_normalize(nalgebra::Quaternion::new(self.w, self.i, self.j, self.k))
-        }
-    }
-
-    impl From<UnitQuaternion<f32>> for open_pi_scope::Quaternion {
-        fn from(value: UnitQuaternion<f32>) -> Self {
-            open_pi_scope::Quaternion {
-                w: value.w,
-                i: value.i,
-                j: value.j,
-                k: value.k,
-            }
-        }
-    }
-
-
-}
-
-
-
-    pub(crate) mod open_pi_scope;
 
 static STORAGE: StaticCell<storage::Storage> = StaticCell::new();
 
@@ -77,7 +29,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         handle_broadcasting(store),
         handle_i2c(store),
         alpaca::handle_alpaca(store),
-        alt_az_driver::run_alt_az_driver(store)
+        alt_az_driver::run_alt_az_driver()
     );
     Ok(())
 }
@@ -114,7 +66,7 @@ async fn handle_i2c(storage: &storage::Storage) -> anyhow::Result<()> {
 
     loop {
         let quat = imu.quaternion()?;
-        let dec = storage.get_magnetic_data().await.declination.to_radians();
+        let dec = storage.magnetic_data.get_declination().await.to_radians();
         // Rotation um Z-Achse
         let declination_rotation =
             UnitQuaternion::from_axis_angle(&nalgebra::Vector3::z_axis(), dec);
@@ -124,7 +76,7 @@ async fn handle_i2c(storage: &storage::Storage) -> anyhow::Result<()> {
         ));
         let quat = quat * declination_rotation;
         let (_roll, _pitch, _yaw) = quat.euler_angles();
-        storage.update_orientation(quat.into()).await;
+        storage.update_orientation(quat).await;
 
         let calib = imu.calibration_profile(&mut delay)?;
 
@@ -140,16 +92,13 @@ async fn handle_broadcasting(_storage: &storage::Storage) -> anyhow::Result<()> 
 
     loop {
         let data = serde_json::to_vec(&Broadcast {
-            magic_number: Constants::MagicNumber as u32,
+            magic_number: MAGIC_NUMBER,
         })?;
         socket.send_to(&data, "192.168.178.255:12961").await?;
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 
-struct Rpc {
-    storage: &'static storage::Storage,
-}
 
 /* #[tonic::async_trait]
 impl OpenPiScopeServer for Rpc {
