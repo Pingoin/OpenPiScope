@@ -230,10 +230,13 @@ checksum = "021e862c184ae977658b36c4500f7feac3221ca5da43e3f25bd04ab6c79a29b5"
 dependencies = [
  "axum-core 0.5.2",
  "bytes",
+ "form_urlencoded",
  "futures-util",
  "http",
  "http-body",
  "http-body-util",
+ "hyper",
+ "hyper-util",
  "itoa",
  "matchit 0.8.4",
  "memchr",
@@ -244,10 +247,13 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_path_to_error",
+ "serde_urlencoded",
  "sync_wrapper",
+ "tokio",
  "tower",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -288,6 +294,7 @@ dependencies = [
  "sync_wrapper",
  "tower-layer",
  "tower-service",
+ "tracing",
 ]
 
 [[package]]
@@ -1646,6 +1653,7 @@ dependencies = [
  "async-trait",
  "atomic_struct",
  "atomic_struct_core",
+ "axum 0.8.4",
  "bno055",
  "chrono",
  "critical-section",

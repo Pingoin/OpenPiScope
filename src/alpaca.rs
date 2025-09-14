@@ -100,7 +100,7 @@ impl Telescope for AlpacaTelescope {
 
     async fn azimuth(&self) -> ASCOMResult<f64> {
         let orientation = self.storage.get_orientation().await.unwrap_or_default();
-        let azimuth = (orientation.1.yaw as f64).to_degrees() + 180.0; // Adjusting to 0-360 range
+        let azimuth = (orientation.euler.yaw as f64).to_degrees() + 180.0; // Adjusting to 0-360 range
         if azimuth >= 360.0 {
             return Ok(azimuth - 360.0);
         }
@@ -109,7 +109,7 @@ impl Telescope for AlpacaTelescope {
 
     async fn altitude(&self) -> ASCOMResult<f64> {
         let orientation = self.storage.get_orientation().await.unwrap_or_default();
-        let altitude = orientation.1.pitch as f64;
+        let altitude = orientation.euler.pitch as f64;
         Ok(altitude.to_degrees())
     }
 

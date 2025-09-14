@@ -137,8 +137,8 @@ pub(crate) async fn run_alt_az_driver() -> Result<()> {
         if let Some(orientation) = orientation {
             if !driver_handle.get_position_set().await {
                 let target = TelescopePosition::new_alt_az(
-                    orientation.1.pitch as f32,
-                    orientation.1.yaw as f32,
+                    orientation.euler.pitch as f32,
+                    orientation.euler.yaw as f32,
                 );
                 driver_handle.set_current_position(target).await;
                 driver_handle.set_position_set(true).await;

@@ -1,26 +1,46 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 #[atomic_struct::atomic_struct]
-#[derive(serde::Deserialize, Debug, Default, serde::Serialize, Clone)]
+#[derive(Deserialize, Debug, Default, Serialize, Clone, utoipa::ToSchema)]
 pub struct GnssData {
+    #[schema(value_type = f64)]
     pub lat: f64,
+    #[schema(value_type = f64)]
     pub lon: f64,
+    #[schema(value_type = f32)]
     pub alt: f32,
+    #[schema(value_type = i32)]
     pub leap_seconds: i32,
+    #[schema(value_type = f32)]
     pub estimated_error_longitude: f32,
+    #[schema(value_type = f32)]
     pub estimated_error_latitude: f32,
+    #[schema(value_type = f32)]
     pub estimated_error_plane: f32,
+    #[schema(value_type = f32)]
     pub estimated_error_altitude: f32,
+    #[schema(value_type = f32)]
     pub track: f32,
+    #[schema(value_type = f32)]
     pub speed: f32,
+    #[schema(value_type = f32)]
     pub climb: f32,
+    #[schema(value_type = Mode)]
     pub mode: Mode,
+    #[schema(value_type = f32)]
     pub estimated_error_track: f32,
+    #[schema(value_type = f32)]
     pub estimated_error_speed: f32,
+    #[schema(value_type = f32)]
     pub estimated_error_climb: f32,
+    #[schema(value_type = Vec<Satellite>)]
     pub satellites: Vec<Satellite>,
 }
-#[derive(serde::Deserialize, Default, serde::Serialize, Clone, Copy, Debug, PartialEq)]
+
+#[derive(
+    serde::Deserialize, Default, serde::Serialize, Clone, Copy, Debug, PartialEq, ToSchema,
+)]
 pub struct Satellite {
     pub prn: i32,
     pub elevation: f32,
@@ -37,9 +57,19 @@ pub struct Position {
     pub altitude: f32,
 }
 
-
 #[derive(
-    Clone, Default, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+    Clone,
+    Default,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    utoipa::ToSchema,
 )]
 #[repr(u8)]
 pub enum Mode {
@@ -85,9 +115,8 @@ impl From<gpsd_proto::Mode> for Mode {
     }
 }
 
-
 #[derive(
-    Clone, Copy, Default, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+    Clone, Copy, Default, Debug, ToSchema,PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
 )]
 #[repr(u8)]
 pub enum GnssSystem {
@@ -148,18 +177,17 @@ impl From<u8> for GnssSystem {
             _ => GnssSystem::Gps, // Default case
         }
     }
-    
 }
 
-    impl From<gpsd_proto::Satellite> for Satellite {
-        fn from(value: gpsd_proto::Satellite) -> Self {
-            Satellite {
-                prn: value.prn as i32,
-                elevation: value.el.unwrap_or_default(),
-                azimuth: value.az.unwrap_or_default(),
-                signal_strength: value.ss.unwrap_or_default(),
-                used: value.used,
-                system: value.gnssid.unwrap_or_default().into(),
-            }
+impl From<gpsd_proto::Satellite> for Satellite {
+    fn from(value: gpsd_proto::Satellite) -> Self {
+        Satellite {
+            prn: value.prn as i32,
+            elevation: value.el.unwrap_or_default(),
+            azimuth: value.az.unwrap_or_default(),
+            signal_strength: value.ss.unwrap_or_default(),
+            used: value.used,
+            system: value.gnssid.unwrap_or_default().into(),
         }
     }
+}

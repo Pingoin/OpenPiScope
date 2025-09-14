@@ -4,7 +4,6 @@ use nalgebra::UnitQuaternion;
 
 use open_pi_scope::{Broadcast, MAGIC_NUMBER};
 use rppal::i2c::I2c;
-use static_cell::StaticCell;
 use std::{error::Error, net::SocketAddr, time::Duration};
 use tokio::net::{TcpStream, UdpSocket};
 use tokio_util::codec::{Framed, LinesCodec};
@@ -13,19 +12,16 @@ pub(crate) mod helpers;
 
 mod storage;
 
-static STORAGE: StaticCell<storage::Storage> = StaticCell::new();
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     println!("Starting");
-
-    let store = STORAGE.init(storage::Storage::new());
-
+    let store = storage::storage();
     store.load_config().await?;
 
     let _res = join!(
-        handle_gnss(store),
-        handle_web(store),
+        handle_gnss(),
+        api::handle_web(),
         handle_broadcasting(store),
         handle_i2c(store),
         alpaca::handle_alpaca(store),
@@ -34,16 +30,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-async fn handle_web(_storage: &'static storage::Storage) -> anyhow::Result<()> {
-    Ok(())
-}
+mod api;
 
-async fn handle_gnss(gps: &storage::Storage) -> anyhow::Result<()> {
+async fn handle_gnss() -> anyhow::Result<()> {
     let addr: SocketAddr = "127.0.0.1:2947".parse().unwrap();
     let stream = TcpStream::connect(&addr).await?;
     let mut framed: Framed<TcpStream, LinesCodec> = Framed::new(stream, LinesCodec::new());
     framed.send(gpsd_proto::ENABLE_WATCH_CMD).await?;
-    framed.try_for_each(|line| gps.update_gpsd(line)).await?;
+    framed.try_for_each(|line| storage::storage().update_gpsd(line)).await?;
     Ok(())
 }
 
@@ -75,13 +69,13 @@ async fn handle_i2c(storage: &storage::Storage) -> anyhow::Result<()> {
             quat.s, quat.v.x, quat.v.y, quat.v.z,
         ));
         let quat = quat * declination_rotation;
-        let (_roll, _pitch, _yaw) = quat.euler_angles();
+        dbg!(&quat);
         storage.update_orientation(quat).await;
 
         let calib = imu.calibration_profile(&mut delay)?;
 
         storage.set_bno055_calib(calib).await?;
-
+        
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }

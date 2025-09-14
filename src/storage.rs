@@ -1,13 +1,16 @@
 use bno055::BNO055Calibration;
 use chrono::Datelike;
 use gpsd_proto::UnifiedResponse;
-use nalgebra::{Quaternion, UnitQuaternion};
+use nalgebra::UnitQuaternion;
 use open_pi_scope::{
-    alignment::{AlignmentData, EulerAngle},
+    alignment::{AlignmentData, EulerAngle, Orientation},
     gnss::{GnssData, Position},
     magnetic::MagneticData,
 };
-use std::{fs, sync::{Arc, OnceLock}};
+use std::{
+    fs,
+    sync::{Arc, OnceLock},
+};
 use tokio::sync::Mutex;
 use tokio_util::codec::LinesCodecError;
 use toml_edit::{value, DocumentMut};
@@ -26,14 +29,14 @@ use crate::helpers::{hex_decode, hex_encode, vec_to_calib};
 
 const CONFIG_PATH: &str = "/boot/open-pi-scope/config.toml";
 
-pub(crate) fn storage() -> &'static Storage {
-    static STORAGE: OnceLock<Storage> = OnceLock::new();
-    STORAGE.get_or_init(|| Storage::new())
+pub(crate) fn storage() -> &'static Arc<Storage> {
+    static STORAGE: OnceLock<Arc<Storage>> = OnceLock::new();
+    STORAGE.get_or_init(|| Arc::new(Storage::new()))
 }
 
 #[derive(Debug)]
 pub(crate) struct Storage {
-    pub(crate) gnss_data: GnssData,
+    pub(crate) gnss_data: Arc<GnssData>,
     pub(crate) magnetic_data: MagneticData,
     pub(crate) alingment_data: AlignmentData,
     config: Arc<Mutex<DocumentMut>>,
@@ -42,7 +45,7 @@ pub(crate) struct Storage {
 impl Storage {
     pub fn new() -> Self {
         Storage {
-            gnss_data: GnssData::default(),
+            gnss_data: Arc::new(GnssData::default()),
             magnetic_data: MagneticData::default(),
             alingment_data: AlignmentData::default(),
             config: Arc::new(Mutex::new(DocumentMut::new())),
@@ -105,6 +108,7 @@ impl Storage {
                 UnifiedResponse::Sky(s) => {
                     if let Some(sats) = s.satellites.clone() {
                         let sats = sats.iter().map(|sat| sat.clone().into()).collect();
+
                         self.gnss_data.set_satellites(sats).await;
                     }
                 }
@@ -139,8 +143,11 @@ impl Storage {
         };
     }
 
-    pub async fn get_gnss_data(&self) -> GnssData {
-        self.gnss_data.clone()
+    pub async fn get_gnss_data(&self) -> Arc<GnssData> {
+        dbg!(&self.gnss_data);
+        let bla = self.gnss_data.clone();
+        dbg!(&bla);
+        bla.clone()
     }
     pub async fn get_magnetic_data(&self) -> MagneticData {
         self.magnetic_data.clone()
@@ -156,8 +163,8 @@ impl Storage {
         self.alingment_data.set_alignment(Some(orientation)).await;
     }
 
-    pub async fn get_orientation(&self) -> Option<(Quaternion<f32>, EulerAngle)> {
-        let quat: UnitQuaternion<f32> =self.alingment_data.get_alignment().await?;
+    pub async fn get_orientation(&self) -> Option<Orientation> {
+        let quat: UnitQuaternion<f32> = self.alingment_data.get_alignment().await?;
         let quat = if let Some(correction) = self.alingment_data.get_correction().await {
             let correction: UnitQuaternion<f32> = correction;
             quat * correction
@@ -166,14 +173,14 @@ impl Storage {
         };
 
         let (roll, pitch, yaw) = quat.euler_angles();
-        Some((
-            quat.quaternion().clone(),
-            EulerAngle {
-                roll: roll,
-                pitch: pitch,
-                yaw: yaw,
+        Some(Orientation {
+            quaternion: quat.clone(),
+            euler: EulerAngle {
+                roll: roll.to_degrees(),
+                pitch: pitch.to_degrees(),
+                yaw: yaw.to_degrees(),
             },
-        ))
+        })
     }
     pub async fn get_bno055_calib(&self) -> Option<BNO055Calibration> {
         let document = self.config.lock().await;

@@ -14,7 +14,7 @@ compile:
     cross build --target aarch64-unknown-linux-gnu --release
 
 compress: compile
-    upx --best --lzma target/aarch64-unknown-linux-gnu/release/open-pi-scope
+    # upx --best --lzma target/aarch64-unknown-linux-gnu/release/open-pi-scope
 
 first-upload: compress
     just scp-upload "target/aarch64-unknown-linux-gnu/release/open-pi-scope" "/opt/open-pi-scope/"
